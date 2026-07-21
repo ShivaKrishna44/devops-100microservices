@@ -1,165 +1,342 @@
 # Invesco Principal Engineer I — Interview Prep
 
-## Role Analysis
+## Role Summary
 
-This is a **Cloud Infrastructure + Operations** role (not pure DevOps/SRE). Key signals:
-- Splunk + CloudWatch + ServiceNow = operations-heavy
-- ITIL + Major Incidents = process-oriented
-- WIZ = cloud security posture management
-- OpenTofu mention = they're forward-thinking on IaC
-- AI mentioned in infra = likely ML workloads or AI-assisted ops
-
----
-
-## Top Questions They Will Ask (Mapped to JD)
+Cloud Infrastructure + Operations role in financial services. Focus areas:
+- AWS infrastructure at scale
+- Monitoring (Splunk, CloudWatch) + Incident Management (ServiceNow, ITIL)
+- Security (WIZ, compliance)
+- IaC (Terraform, OpenTofu)
+- Leadership across 100+ teams
 
 ---
 
-### 1. INFRASTRUCTURE MANAGEMENT
-
-**Q: "Walk me through how you've designed a scalable cloud infrastructure on AWS."**
-
-> "In my current role, I architected a multi-account AWS setup using Organizations with separate OUs for production, staging, and shared services. The core infrastructure runs on EKS with 3 AZs for HA, using Terraform modules for VPC, EKS, RDS, and ElastiCache. I designed the VPC with private subnets for workloads, public subnets only for ALB/NLB, and NAT Gateways per AZ for redundancy. For compute, we use a mix of EC2 (for stateful workloads) and EKS managed node groups (for microservices) with autoscaling based on CPU and custom metrics."
-
-**Q: "How do you handle multi-AZ / multi-region HA?"**
-
-> "For our critical services, we run active-active across 3 AZs within a region. RDS uses Multi-AZ with automatic failover. For DR, we have a pilot-light setup in a secondary region — RDS read replicas promote to primary, EKS cluster stays warm with minimum nodes, Route53 health checks trigger failover. RTO is under 15 minutes, RPO under 1 minute for critical data."
-
-**Q: "How do you handle AI/ML infrastructure on AWS?"**
-
-> "We provision SageMaker endpoints for model inference, use S3 for training data with lifecycle policies, and EKS with GPU node groups (p3/g4 instances) for custom training jobs. For cost control, we use Spot instances for training and reserved capacity for inference endpoints."
+## TOP 7 SCENARIO QUESTIONS
 
 ---
 
-### 2. MONITORING & ALERTING (Splunk + CloudWatch + ServiceNow)
+### Q1: How would you design a secure multi-account AWS environment with US vs EU data residency?
 
-**Q: "How do you implement monitoring and alerting in your environment?"**
+**Your Answer (30 seconds):**
 
-> "We use a layered approach:
-> - **CloudWatch** for AWS-native metrics (EC2, RDS, EKS control plane, Lambda). Custom metrics pushed via CloudWatch agent for application-level data.
-> - **Splunk** for centralized log aggregation and analysis. All application logs, VPC flow logs, CloudTrail audit logs ship to Splunk via Kinesis Firehose. We build dashboards and saved searches for proactive anomaly detection.
-> - **ServiceNow** integration for incident management — alerts from CloudWatch/Splunk trigger ServiceNow incidents automatically based on severity. P1/P2 alerts go to PagerDuty first, then auto-create ServiceNow tickets for tracking and SLA compliance."
+"I use AWS Organizations with separate OUs per region. Each OU has a Service Control Policy that blocks all API calls to regions outside its boundary. Even an account admin cannot create resources in the wrong region — SCPs override everything. On top of that, Terraform validates at plan time, CI/CD pipelines have pre-apply checks, and AWS Config detects any drift."
+
+**The Structure:**
+
+```
+AWS Organizations
+├── OU: US-Workloads    → SCP allows only us-east-1, us-west-2
+│   ├── us-prod
+│   ├── us-staging
+│   └── us-dev
+├── OU: EU-Workloads    → SCP allows only eu-west-1, eu-central-1
+│   ├── eu-prod
+│   ├── eu-staging
+│   └── eu-dev
+├── OU: Shared-Services → networking, security, logging
+└── OU: Sandbox         → developer accounts (budget-limited)
+```
+
+**Why separate accounts (not just tags)?**
+- Hard isolation — no IAM mistake can cross the boundary
+- Network: EU VPCs cannot route to US via Transit Gateway
+- Encryption: Region-specific KMS keys, non-shareable
+- Audit: CloudTrail proves data never left the region
+
+---
+
+### Q2: How do you achieve Zero-Trust in CI/CD when connecting GitHub Actions to AWS?
+
+**Your Answer (30 seconds):**
+
+"No stored AWS credentials anywhere. We use OIDC federation — GitHub Actions gets a short-lived token, exchanges it with AWS via AssumeRoleWithWebIdentity, gets a 15-minute session scoped to that specific repo and environment. No secrets to rotate, no credentials to leak."
+
+**How it works:**
+
+```
+GitHub Actions  →  OIDC Token  →  AWS IAM  →  Short-lived credentials (15 min)
+                                     ↓
+                              Role scoped to:
+                              - This repo only
+                              - This branch only
+                              - This environment only
+                              - Minimum permissions
+```
+
+**Key controls:**
+- No long-lived AWS access keys stored in GitHub
+- Each repo gets its own IAM role (not shared)
+- Production role only assumable from `main` branch
+- GitHub Environments require approval for prod deploys
+- CloudTrail logs every assume-role with repo/branch/actor
+
+---
+
+### Q3: How do you maintain standards across 100+ teams without becoming a bottleneck?
+
+**Your Answer (30 seconds):**
+
+"I build paved roads, not walls. Teams get self-service through pre-built Terraform modules, reusable CI/CD templates, and policy-as-code that runs automatically. The compliant path is also the fastest path — so teams adopt it by choice, not force."
+
+**What you provide:**
+
+| What | How Teams Use It |
+|------|-----------------|
+| Terraform modules | `source = "registry/microservice"` — standards baked in |
+| CI/CD templates | `uses: org/workflows/deploy.yml@v2` — one line to adopt |
+| Policy-as-code (OPA/Kyverno) | Auto-rejects bad configs in CI — no human gate |
+| Golden container images | Pre-hardened base images teams build on |
+| Self-service portal | Teams provision infra without tickets |
+
+**Result:** Teams deploy independently. Platform team only involved for exceptions (5% of cases).
+
+**Key phrase:** "If teams are fighting your guardrails, the guardrails are designed wrong."
+
+---
+
+### Q4: Walk through handling a Major Production Outage with 99.99% SLA.
+
+**Your Answer (30 seconds):**
+
+"99.99% means max 52 minutes downtime per year. My first action: check if anything deployed recently — if yes, rollback immediately, investigate later. If not, I open a war room, run parallel investigation streams, and communicate every 15 minutes."
+
+**Timeline:**
+
+| Minute | Action |
+|--------|--------|
+| 0-2 | Alert fires → On-call acknowledges |
+| 2-5 | Classify severity → Open war room → Page SMEs |
+| 5-15 | **Parallel investigation:** recent deploys? infra metrics? dependency health? error logs? |
+| 15-30 | **Mitigate:** Rollback / Scale up / Failover (fix now, RCA later) |
+| 30+ | Verify recovery → Stand down → Status page "Resolved" |
+| 48 hrs | Blameless post-mortem → Action items in Jira |
+
+**Decision rules:**
+- Recent deploy + issues = **rollback first, ask questions later**
+- Unknown cause = **escalate early**, don't spend 30 min alone
+- Multiple services down = **fix the shared dependency**, not the symptoms
+
+**How to stay at 99.99%:**
+- Multi-AZ everything, no single points of failure
+- Canary deployments catch issues with 1% traffic
+- Pre-written runbooks for known failure modes
+- Automated failover (Route53 health checks, RDS Multi-AZ)
+
+---
+
+### Q5: How do you use Wiz (CSPM) to secure runtime environments?
+
+**Your Answer (30 seconds):**
+
+"Wiz scans our entire cloud agentlessly — VMs, containers, serverless, databases — and builds a security graph. Instead of saying 'you have 10,000 CVEs,' it says 'these 3 CVEs are actually exploitable from the internet and can reach your database.' That prioritization is what lets a small team secure hundreds of accounts."
+
+**Three use cases:**
+
+**1. Shift-Left (CI/CD):**
+- Scan container images in pipeline
+- Block deployment if critical exploitable CVE found
+- Developer fixes before code reaches production
+
+**2. Runtime Detection:**
+- Continuously scans running workloads for new CVEs
+- Identifies toxic combinations: critical CVE + runs as root + network access to DB
+- Alerts create ServiceNow incidents automatically
+
+**3. Compliance Evidence:**
+- Maps findings to SOC2/CIS/PCI frameworks
+- Generates audit-ready reports automatically
+- Auditors get Wiz dashboard instead of manual screenshots
+
+**Why Wiz over traditional scanners:**
+- Agentless = no performance impact on production
+- Attack path analysis = prioritization by actual risk, not just CVSS score
+- Covers everything (VMs, containers, serverless, data stores) in one tool
+
+---
+
+### Q6: How would you migrate hundreds of Jenkins pipelines to GitHub Actions?
+
+**Your Answer (30 seconds):**
+
+"Never big-bang. I categorize pipelines by complexity, build reusable GitHub Actions templates for common patterns, then migrate in waves starting with non-critical services. Both systems run in parallel during transition."
+
+**The plan:**
+
+```
+Phase 1 (Week 1-2):  DISCOVER
+  → Inventory all pipelines via Jenkins API
+  → Categorize: Simple (70%) | Complex (20%) | Exotic (10%)
+  → Map Jenkins plugins to GitHub Actions equivalents
+
+Phase 2 (Week 2-4):  BUILD TEMPLATES
+  → Create reusable workflows: build, test, scan, deploy
+  → Set up OIDC auth (no stored credentials)
+  → Write migration guide for teams
+
+Phase 3 (Month 1-3): MIGRATE IN WAVES
+  → Wave 1: Non-critical/dev pipelines (platform team does it)
+  → Wave 2: Standard prod pipelines (teams do it with support)
+  → Wave 3: Complex pipelines (pair with platform team)
+
+Phase 4 (Month 4):   DECOMMISSION
+  → Jenkins read-only (no new pipelines)
+  → Archive and shut down
+```
+
+**Key decisions:**
+- Jenkins shared libraries → GitHub reusable workflows
+- Jenkins credentials → OIDC for AWS, GitHub secrets for others
+- Approval gates → GitHub Environments with required reviewers
+- Self-hosted runners for private VPC access
+
+---
+
+### Q7: How do you handle a team that refuses your security guardrails because it slows them down?
+
+**Your Answer (30 seconds):**
+
+"First I listen and measure the actual impact. Then I optimize the guardrail — make it faster, not remove it. If a security scan takes 8 minutes, I restructure it to take 45 seconds. When the compliant path is fast, resistance disappears."
+
+**My 4-step approach:**
+
+**Step 1: Listen & Measure**
+- What specifically is slow? A 10-min scan? An approval gate? A flaky check?
+- Measure actual time impact — often less than perceived
+
+**Step 2: Optimize (Not Remove)**
+
+| Complaint | Fix |
+|-----------|-----|
+| "Scan takes 10 min" | Run in parallel, scan only changed files, cache results |
+| "Approval gate delays 2 hours" | Auto-approve for non-prod, pre-approved paths for standard changes |
+| "Policy keeps failing" | Better error messages, pre-commit hooks catch issues locally |
+
+**Step 3: Show the Risk**
+- Share real incidents: "This CVE took down a trading platform for 4 hours. Our scan catches it in 30 seconds."
+- In financial services, the cost of a breach far outweighs 45 seconds of scan time
+
+**Step 4: Escalate Only as Last Resort**
+- Present data to their manager: "Here's the compliance gap we're accepting"
+- In regulated industries, this is rarely needed — the risk is clear
+
+**Key principle:** "Security should be invisible when you're doing the right thing, and only visible when you're about to do something dangerous."
+
+---
+
+## ADDITIONAL QUESTIONS (By JD Category)
+
+---
+
+### Infrastructure Management
+
+**Q: "Walk me through a scalable AWS infrastructure you've designed."**
+
+"Multi-account setup with Organizations. VPC with 3 AZs — private subnets for workloads, public only for ALB. EKS for microservices with managed node groups and autoscaling. RDS Multi-AZ for databases. Terraform modules for everything — teams consume from a private registry."
+
+---
+
+### Monitoring & Alerting (Splunk + CloudWatch + ServiceNow)
+
+**Q: "How do you implement monitoring?"**
+
+"Three layers:
+- **CloudWatch** — AWS-native metrics (EC2, RDS, EKS). Custom metrics via agent for app-level data.
+- **Splunk** — Centralized logs. All app logs, VPC flow logs, CloudTrail ship via Kinesis Firehose. Dashboards + correlation rules for anomaly detection.
+- **ServiceNow** — Alerts auto-create incidents with proper severity, assignment group, and initial diagnostics. SLA tracking built in."
 
 **Q: "How do you reduce alert fatigue?"**
 
-> "Three things: First, I tune thresholds based on historical data — not arbitrary numbers. Second, I implement correlation rules in Splunk to group related alerts into a single incident. Third, I categorize alerts by actionability — if no one needs to act, it's a notification, not an alert. We review alert volumes monthly and silence or tune anything with less than 10% action rate."
-
-**Q: "How do you integrate monitoring with ServiceNow?"**
-
-> "CloudWatch alarms trigger SNS → Lambda → ServiceNow API to create incidents with proper categorization, assignment group, and priority. Splunk alerts use webhook actions to the ServiceNow REST API. Every incident auto-populates with affected CI (Configuration Item), environment, and initial diagnostics. Resolution notes feed back via the same integration for knowledge base updates."
+"Three rules: (1) Tune thresholds from historical data, not guesses. (2) Correlate related alerts into single incidents. (3) If nobody acts on it, it's not an alert — remove it. Monthly review of alert volumes."
 
 ---
 
-### 3. AUTOMATION (Terraform + CloudFormation + OpenTofu + Python + Bash)
+### Automation (Terraform + Python + Bash)
 
-**Q: "How do you manage IaC at scale with Terraform?"**
+**Q: "How do you manage Terraform at scale?"**
 
-> "We structure Terraform as reusable modules in a private registry — VPC, EKS, RDS, S3 modules that teams consume with versioned references. State is stored in S3 with DynamoDB locking, one state file per environment per component. We enforce standards via Sentinel/OPA policies that run in CI before apply — no public S3 buckets, no open security groups, mandatory tagging. For drift detection, we run `terraform plan` nightly and alert on unexpected changes."
+"Reusable modules in a private registry, versioned. State in S3 + DynamoDB locking, one state per environment per component. OPA/Sentinel policies in CI — blocks non-compliant resources before apply. Nightly drift detection via scheduled `terraform plan`."
 
-**Q: "Why would you consider OpenTofu over Terraform?"**
+**Q: "Give an example of automation you've built."**
 
-> "OpenTofu is the open-source fork after HashiCorp's BSL license change. For an enterprise like Invesco, the decision depends on: licensing concerns with Terraform Enterprise, community module compatibility, and long-term support. Both are syntactically compatible today. If the organization wants to avoid vendor lock-in on the IaC tool itself, OpenTofu is the risk-free choice. I'd evaluate based on the enterprise support model and existing Terraform Enterprise investment."
-
-**Q: "Give an example of automation you've built with Python/Bash."**
-
-> "I automated our incident response runbooks — a Python-based tool that on P1 alert: (1) queries CloudWatch for the affected resource metrics, (2) checks recent deployments via the ArgoCD API, (3) collects relevant Splunk logs, (4) packages it all into a ServiceNow incident with pre-populated diagnostics. Reduced initial triage time from 15 minutes to under 2 minutes."
+"Automated incident triage — Python script that on P1 alert: queries CloudWatch metrics, checks recent deployments via ArgoCD API, collects Splunk logs, and creates a ServiceNow incident with pre-populated diagnostics. Reduced initial triage from 15 minutes to 2 minutes."
 
 ---
 
-### 4. INCIDENT RESPONSE & MAJOR INCIDENTS
-
-**Q: "Walk me through how you handle a Major Incident."**
-
-> "We follow ITIL's Major Incident process:
-> 1. **Detection** — Automated alert from Splunk/CloudWatch or user report
-> 2. **Triage** — On-call engineer assesses impact and severity (P1-P4)
-> 3. **Bridge call** — For P1/P2, I open a war room (Teams/Zoom bridge), page relevant SMEs
-> 4. **Communicate** — Status page update, stakeholder email within 15 minutes
-> 5. **Resolve** — Parallel workstreams: identify root cause + implement workaround
-> 6. **Post-mortem** — Blameless RCA within 48 hours, action items tracked in Jira
->
-> As Principal, my role is usually Incident Commander — coordinating teams, making escalation decisions, and ensuring communication flows."
-
-**Q: "Tell me about a critical production incident you resolved."**
-
-> "We had an intermittent 5xx spike on our payment processing service during peak hours. Initial investigation showed healthy pods and normal CPU/memory. I checked Splunk logs and found connection timeout errors to our RDS instance. CloudWatch showed DB connections at 100% of max. Root cause: a code change introduced connection leaks — connections weren't being returned to the pool. Immediate fix: scaled RDS connection limit and restarted the affected pods. Long-term: added connection pool monitoring, implemented connection timeout enforcement, and added a pre-deploy load test that catches connection leaks."
-
----
-
-### 5. SECURITY & COMPLIANCE (WIZ mentioned)
-
-**Q: "How do you enforce security in your cloud environment?"**
-
-> "Defense in depth:
-> - **Preventive**: SCPs restrict regions/services, IAM follows least-privilege with permission boundaries, no long-lived credentials (use IRSA/IAM roles everywhere)
-> - **Detective**: WIZ for cloud security posture management — scans for misconfigurations, vulnerabilities, and lateral movement paths. GuardDuty for threat detection, CloudTrail for audit.
-> - **Responsive**: Automated remediation via Lambda — if WIZ finds a public S3 bucket, it auto-blocks public access and creates a ServiceNow incident.
-> - **Compliance**: AWS Config rules for continuous compliance checking against CIS benchmarks, SOC2 controls mapped and evidenced automatically."
+### Security & Compliance
 
 **Q: "What is WIZ and how have you used it?"**
 
-> "WIZ is an agentless cloud security platform that scans your entire cloud estate — VMs, containers, serverless, data stores — for vulnerabilities, misconfigurations, and toxic risk combinations. I use it for: vulnerability prioritization (it shows which CVEs are actually exploitable given your network context), compliance dashboards for audit evidence, and CI/CD integration to block deployments with critical findings. The agentless approach is key — no performance impact on production workloads."
+"Agentless CSPM that scans entire cloud estate for vulnerabilities, misconfigs, and attack paths. I use it for: CI/CD blocking (fail deploys with critical CVEs), runtime detection (continuous scanning), and compliance evidence (auto-generated SOC2/CIS reports for auditors)."
+
+**Q: "How do you enforce security?"**
+
+"Defense in depth: SCPs prevent (region restrictions, service restrictions). WIZ detects (runtime scanning). OPA blocks (policy-as-code in CI). AWS Config monitors (drift detection + auto-remediation). CloudTrail audits (who did what, when)."
 
 ---
 
-### 6. PERFORMANCE & COST OPTIMIZATION
+### Cost Optimization
 
-**Q: "How do you optimize cloud costs?"**
+**Q: "How do you optimize a multi-million dollar AWS bill?"**
 
-> "I approach it in layers:
-> - **Right-sizing**: Use CloudWatch metrics + AWS Compute Optimizer recommendations. If a t3.large consistently uses 10% CPU, downsize it.
-> - **Reserved/Savings Plans**: For stable workloads (RDS, baseline EKS nodes), commit to 1-year savings plans — typically 30-40% savings.
-> - **Spot instances**: For non-critical batch jobs, CI/CD runners, and dev environments.
-> - **Automation**: Lambda functions to stop dev environments after hours, lifecycle policies on S3/EBS snapshots.
-> - **Tagging + Showback**: Every resource tagged with team/project/cost-center. Monthly cost reports per team with anomaly alerts."
+"Four pillars:
+1. **Visibility** — Mandatory tagging, per-team dashboards, anomaly alerts
+2. **Right-sizing** — Compute Optimizer + CloudWatch metrics → downsize over-provisioned resources (20-30% savings)
+3. **Pricing** — Savings Plans for baseline, Spot for batch/CI, Graviton for 20% cheaper compute
+4. **Architecture** — VPC endpoints (no NAT charges), S3 Intelligent-Tiering, dev environments auto-shutdown after hours
 
----
-
-### 7. COLLABORATION & LEADERSHIP (Principal Level)
-
-**Q: "How do you drive standards across teams?"**
-
-> "I create 'golden paths' — pre-built Terraform modules, CI/CD templates, and reference architectures that make the right way the easy way. I don't mandate through policy alone — I show teams the value. For example, I built a self-service platform where teams can deploy new services by filling out a YAML config, and the pipeline handles everything else. Adoption went from forced compliance to organic demand."
-
-**Q: "How do you mentor less experienced engineers?"**
-
-> "I pair on incident response — nothing teaches faster than real problems. I document decisions in ADRs (Architecture Decision Records) so juniors understand the 'why'. I run weekly office hours where anyone can bring infrastructure questions. And I delegate progressively — start with guided tasks, move to design reviews, then full ownership."
+Typical result: 40-50% reduction in year 1 on an over-provisioned account."
 
 ---
 
-### 8. NETWORKING
+### Monolith → Microservices
 
-**Q: "Explain your VPC architecture."**
+**Q: "How do you decouple legacy monoliths safely?"**
 
-> "3-tier: public subnets (ALB/NLB only), private subnets (applications/EKS), isolated subnets (databases). NAT Gateway per AZ for HA. VPC peering or Transit Gateway for cross-account communication. Security groups as primary firewall — stateful, least-privilege, no 0.0.0.0/0 ingress. NACLs as secondary defense for subnet-level rules. Route53 private hosted zones for internal service discovery."
-
-**Q: "How do you troubleshoot network connectivity issues in AWS?"**
-
-> "Systematic approach: (1) Security Groups — verify inbound/outbound rules, (2) NACLs — check if deny rules are blocking, (3) Route tables — ensure routes exist to target, (4) VPC Flow Logs — check if traffic is ACCEPTED or REJECTED, (5) DNS — verify resolution with `nslookup`, (6) For cross-account: check Transit Gateway routes and VPC peering configurations."
+"Strangler Fig pattern — never a big-bang rewrite. Extract one service at a time, starting with the least-coupled. API Gateway routes traffic between monolith and new microservice. Run both in parallel until confident. The hardest part is splitting the shared database — I use Change Data Capture (DMS/Debezium) during transition to keep data in sync."
 
 ---
 
-## Tools They Mention — Be Ready to Discuss
+### Networking
 
-| Tool | Your Response |
-|------|--------------|
-| **Splunk** | Log aggregation, dashboards, alerts, correlation searches, saved searches |
-| **CloudWatch** | Native AWS metrics, custom metrics, alarms, log groups, Insights queries |
-| **ServiceNow** | ITSM — incidents, change management, CMDB, SLA tracking |
-| **WIZ** | Agentless cloud security scanning, vulnerability prioritization, compliance |
-| **Terraform/OpenTofu** | IaC, modules, state management, Sentinel policies, drift detection |
-| **Jenkins** | CI/CD pipelines, shared libraries, agent management |
-| **Docker/Kubernetes** | Containerization, EKS, deployments, troubleshooting |
-| **ITIL** | Incident, Problem, Change Management processes |
-| **Jira/Confluence** | Sprint planning, documentation, runbooks |
+**Q: "How do you troubleshoot network issues in AWS?"**
+
+"Systematic: (1) Security Groups — inbound/outbound rules. (2) NACLs — subnet-level deny rules. (3) Route tables — does route exist? (4) VPC Flow Logs — traffic ACCEPTED or REJECTED? (5) DNS — can the service resolve? (6) For cross-account: Transit Gateway routes."
 
 ---
 
-## Questions YOU Should Ask Them
+## TOOLS THEY MENTION — Quick Responses
 
-1. "What does the current cloud footprint look like — single account, multi-account, multi-region?"
-2. "How mature is the IaC adoption — are most teams using Terraform, or is there still manual provisioning?"
-3. "What's the on-call rotation structure for this role?"
-4. "Are you migrating workloads to containers/EKS, or is it mostly EC2-based?"
-5. "What's the biggest operational challenge the team faces today?"
-6. "How does the team handle change management — full ITIL CAB process, or lighter-weight?"
+| Tool | What You Say |
+|------|-------------|
+| **Splunk** | "Centralized logs, dashboards, correlation searches, alert actions to ServiceNow" |
+| **CloudWatch** | "Native AWS metrics, custom metrics, alarms, log insights, anomaly detection" |
+| **ServiceNow** | "ITSM: incidents, change management, CMDB, SLA tracking, problem management" |
+| **WIZ** | "Agentless CSPM, attack path analysis, CI/CD scanning, compliance evidence" |
+| **Terraform/OpenTofu** | "IaC modules, state management, policy-as-code, drift detection" |
+| **ITIL** | "Incident → Problem → Change management processes, CAB for prod changes" |
+| **Jenkins** | "CI/CD pipelines, shared libraries, agent management" |
+| **Docker/Kubernetes** | "Containerization, EKS, deployments, HPA, troubleshooting" |
+
+---
+
+## QUESTIONS YOU ASK THEM
+
+1. "What does your current AWS footprint look like — single account, multi-account?"
+2. "How mature is IaC adoption — Terraform everywhere, or still some manual provisioning?"
+3. "What's the on-call rotation structure?"
+4. "What's the biggest operational challenge the team faces today?"
+5. "Are you migrating to containers, or primarily EC2-based?"
+6. "How does change management work — full ITIL CAB, or lighter process?"
+
+---
+
+## ANSWER STRUCTURE (Use This for Every Question)
+
+```
+1. State approach (1 sentence — what you do)
+2. Why (trade-offs, why this over alternatives)
+3. Example (concrete — from your experience)
+4. Outcome (metric or result)
+```
+
+Example: "We use Strangler Fig for decomposition [approach] because big-bang rewrites fail in financial services [why]. We extracted notifications first — lowest risk [example]. Zero downtime, latency dropped from 2s to 200ms [outcome]."
