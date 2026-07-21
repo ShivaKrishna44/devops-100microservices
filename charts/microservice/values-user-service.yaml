@@ -1,0 +1,17 @@
+image:
+  repository: 589389425618.dkr.ecr.us-east-1.amazonaws.com/user-service
+  tag: "latest"
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+env:
+  - name: SERVICE_NAME
+    value: "user-service"

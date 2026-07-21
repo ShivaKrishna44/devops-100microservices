@@ -1,0 +1,21 @@
+image:
+  repository: 589389425618.dkr.ecr.us-east-1.amazonaws.com/order-service
+  tag: "latest"
+
+replicaCount: 3
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+env:
+  - name: SERVICE_NAME
+    value: "order-service"
+  - name: PAYMENT_SERVICE_URL
+    value: "http://payment-service:5000"
+  - name: USER_SERVICE_URL
+    value: "http://user-service:5000"

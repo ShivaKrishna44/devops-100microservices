@@ -1,0 +1,101 @@
+name: CI - Build & Push
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/**'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.changes.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed services
+        id: changes
+        run: |
+          # Find which service directories changed
+          SERVICES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | \
+            grep '^apps/' | cut -d'/' -f2 | sort -u | jq -R . | jq -sc .)
+          echo "services=$SERVICES" >> $GITHUB_OUTPUT
+          echo "Changed services: $SERVICES"
+
+  build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        working-directory: apps/${{ matrix.service }}
+        run: |
+          IMAGE_TAG="${{ github.sha }}"
+          REPO="${{ env.ECR_REGISTRY }}/${{ matrix.service }}"
+
+          docker build -t ${REPO}:${IMAGE_TAG} -t ${REPO}:latest .
+          docker push ${REPO}:${IMAGE_TAG}
+          docker push ${REPO}:latest
+
+          echo "Pushed: ${REPO}:${IMAGE_TAG}"
+
+      - name: Update Helm values with new image tag
+        run: |
+          SERVICE=${{ matrix.service }}
+          TAG=${{ github.sha }}
+          # Update the values file with new tag
+          sed -i "s/tag: .*/tag: \"${TAG}\"/" charts/microservice/values-${SERVICE}.yaml
+
+      - name: Commit updated image tag
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add charts/
+          git diff --cached --quiet || git commit -m "ci: update ${{ matrix.service }} image to ${{ github.sha }}"
+          git push
+
+  security-scan:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/${{ matrix.service }}'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
