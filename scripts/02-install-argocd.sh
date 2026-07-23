@@ -7,10 +7,10 @@ echo "=== Installing ArgoCD ==="
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 
 # Install ArgoCD
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
+helm.exe repo add argo https://argoproj.github.io/argo-helm
+helm.exe repo update
 
-helm upgrade --install argocd argo/argo-cd \
+helm.exe upgrade --install argocd argo/argo-cd \
   --namespace argocd \
   --set server.service.type=LoadBalancer \
   --set server.extraArgs[0]="--insecure" \

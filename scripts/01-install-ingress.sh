@@ -4,8 +4,8 @@ set -e
 echo "=== Installing AWS ALB Ingress Controller ==="
 
 # Add Helm repo
-helm repo add eks https://aws.github.io/eks-charts
-helm repo update
+helm.exe repo add eks https://aws.github.io/eks-charts
+helm.exe repo update
 
 # Get ALB controller role ARN from terraform output
 ALB_ROLE_ARN=$(cd ../terraform && terraform output -raw alb_controller_role_arn)
@@ -14,7 +14,7 @@ REGION=$(cd ../terraform && terraform output -raw region)
 VPC_ID=$(cd ../terraform && terraform output -raw vpc_id)
 
 # Install ALB controller
-helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+helm.exe upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --namespace kube-system \
   --set clusterName=${CLUSTER_NAME} \
   --set serviceAccount.create=true \

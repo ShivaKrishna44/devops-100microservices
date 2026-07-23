@@ -7,13 +7,16 @@ echo "=== Installing Prometheus + Grafana Stack ==="
 kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
 
 # Add Helm repo
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+helm.exe repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm.exe repo update
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Install kube-prometheus-stack
-helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+helm.exe upgrade --install prometheus prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
-  --values ../kubernetes/monitoring/prometheus-values.yaml \
+  --values ${PROJECT_DIR}/kubernetes/monitoring/prometheus-values.yaml \
   --set grafana.service.type=LoadBalancer \
   --wait --timeout 10m
 
