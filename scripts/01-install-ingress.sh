@@ -1,17 +1,23 @@
 #!/bin/bash
 set -e
 
+
+# aws eks update-kubeconfig --name devops-100ms-cluster --region us-east-1
+
 echo "=== Installing AWS ALB Ingress Controller ==="
 
 # Add Helm repo
 helm.exe repo add eks https://aws.github.io/eks-charts
 helm.exe repo update
 
-# Get ALB controller role ARN from terraform output
-ALB_ROLE_ARN=$(cd ../terraform && terraform output -raw alb_controller_role_arn)
-CLUSTER_NAME=$(cd ../terraform && terraform output -raw cluster_name)
-REGION=$(cd ../terraform && terraform output -raw region)
-VPC_ID=$(cd ../terraform && terraform output -raw vpc_id)
+# Variables — set these to match your environment
+CLUSTER_NAME="devops-100ms-cluster"
+REGION="us-east-1"
+VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=*devops-100ms*" --query "Vpcs[0].VpcId" --output text --region $REGION)
+
+echo "Cluster: $CLUSTER_NAME"
+echo "Region: $REGION"
+echo "VPC: $VPC_ID"
 
 # Install ALB controller
 helm.exe upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
@@ -19,7 +25,6 @@ helm.exe upgrade --install aws-load-balancer-controller eks/aws-load-balancer-co
   --set clusterName=${CLUSTER_NAME} \
   --set serviceAccount.create=true \
   --set serviceAccount.name=aws-load-balancer-controller \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=${ALB_ROLE_ARN} \
   --set region=${REGION} \
   --set vpcId=${VPC_ID}
 

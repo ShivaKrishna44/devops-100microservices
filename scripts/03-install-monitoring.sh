@@ -10,23 +10,26 @@ kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f 
 helm.exe repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm.exe repo update
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-
-# Install kube-prometheus-stack
+# Install kube-prometheus-stack (no persistent storage for lab environment)
 helm.exe upgrade --install prometheus prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
-  --values ${PROJECT_DIR}/kubernetes/monitoring/prometheus-values.yaml \
+  --set grafana.adminPassword=admin123 \
   --set grafana.service.type=LoadBalancer \
-  --wait --timeout 10m
+  --set prometheus.prometheusSpec.retention=2d \
+  --set prometheus.prometheusSpec.storageSpec="" \
+  --set alertmanager.alertmanagerSpec.storage="" \
+  --set grafana.persistence.enabled=false \
+  --timeout 10m
 
 echo ""
 echo "=== Monitoring Stack Installed ==="
-echo "Grafana URL:"
-kubectl -n monitoring get svc prometheus-grafana -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
 echo ""
-echo "Grafana credentials: admin / admin123"
+echo "Access Grafana:"
+echo "  kubectl port-forward svc/prometheus-grafana -n monitoring 3000:80"
+echo "  Open: http://localhost:3000"
+echo "  User: admin | Password: admin123"
 echo ""
-echo "Prometheus URL:"
-kubectl -n monitoring get svc prometheus-kube-prometheus-prometheus -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+echo "Access Prometheus:"
+echo "  kubectl port-forward svc/prometheus-kube-prometheus-prometheus -n monitoring 9090:9090"
+echo "  Open: http://localhost:9090"
 echo ""
