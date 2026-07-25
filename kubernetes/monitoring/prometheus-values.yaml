@@ -1,46 +1,48 @@
 # Prometheus stack values (kube-prometheus-stack Helm chart)
+# Used with: helm upgrade --install prometheus prometheus-community/kube-prometheus-stack -f prometheus-values.yaml
+
 prometheus:
   prometheusSpec:
+    # Allow all ServiceMonitors (not just ones with helm labels)
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
-    retention: 7d
+    retention: 2d
+    # Storage using gp3 StorageClass
     storageSpec:
       volumeClaimTemplate:
         spec:
+          storageClassName: gp3
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: 20Gi
+              storage: 10Gi
 
 alertmanager:
   alertmanagerSpec:
     storage:
       volumeClaimTemplate:
         spec:
+          storageClassName: gp3
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
               storage: 5Gi
 
 grafana:
-  adminPassword: "admin123"  # Change in production!
+  adminPassword: "admin123"
+  service:
+    type: LoadBalancer
   persistence:
     enabled: true
+    storageClassName: gp3
     size: 5Gi
-  dashboardProviders:
-    dashboardproviders.yaml:
-      apiVersion: 1
-      providers:
-        - name: 'custom'
-          orgId: 1
-          folder: 'Microservices'
-          type: file
-          disableDeletion: false
-          editable: true
-          options:
-            path: /var/lib/grafana/dashboards/custom
+  # Fix data source URL (prevents the truncation/connection issue)
+  sidecar:
+    datasources:
+      defaultDatasourceEnabled: true
+      url: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
 
-# Additional scrape configs for our services
+# Alert rules for microservices monitoring
 additionalPrometheusRules:
   - name: microservice-alerts
     groups:
@@ -53,7 +55,6 @@ additionalPrometheusRules:
               severity: critical
             annotations:
               summary: "Service {{ $labels.job }} is down"
-              description: "{{ $labels.job }} has been down for more than 1 minute"
 
           - alert: HighErrorRate
             expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
@@ -62,7 +63,6 @@ additionalPrometheusRules:
               severity: warning
             annotations:
               summary: "High error rate on {{ $labels.job }}"
-              description: "Error rate is above 5% for {{ $labels.job }}"
 
           - alert: HighLatency
             expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
@@ -70,8 +70,7 @@ additionalPrometheusRules:
             labels:
               severity: warning
             annotations:
-              summary: "High latency on {{ $labels.endpoint }}"
-              description: "P95 latency is above 2s"
+              summary: "P95 latency above 2s on {{ $labels.endpoint }}"
 
           - alert: PodCrashLooping
             expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
@@ -87,8 +86,7 @@ additionalPrometheusRules:
             labels:
               severity: warning
             annotations:
-              summary: "High memory usage on {{ $labels.pod }}"
-              description: "Memory usage is above 90% of limit"
+              summary: "High memory on {{ $labels.pod }} (>90% of limit)"
 
           - alert: PodOOMKilled
             expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
