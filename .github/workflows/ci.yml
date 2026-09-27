@@ -3,50 +3,37 @@ name: CI - Build & Push
 on:
   push:
     branches: [main, develop]
-    paths:
-      - 'apps/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'apps/**'
+
+# OIDC — required for aws-actions/configure-aws-credentials with role-to-assume
+permissions:
+  id-token: write # Required for requesting the JWT token
+  contents: write # Required for actions/checkout + committing updated values files
 
 env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+  # Set this to the ARN Terraform outputs from iam-github-actions.tf:
+  #   terraform output -raw github_actions_ci_role_arn
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
 jobs:
-  detect-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      services: ${{ steps.changes.outputs.services }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Detect changed services
-        id: changes
-        run: |
-          # Find which service directories changed
-          SERVICES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | \
-            grep '^apps/' | cut -d'/' -f2 | sort -u | jq -R . | jq -sc .)
-          echo "services=$SERVICES" >> $GITHUB_OUTPUT
-          echo "Changed services: $SERVICES"
-
   build:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.services != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+        # Always build every service on every trigger — no change detection.
+        # Add/remove entries here if apps/ gains or loses a service.
+        service: [order-service, payment-service, user-service, notification-service]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
@@ -77,17 +64,19 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add charts/
+          git add charts/microservice/values-${{ matrix.service }}.yaml
           git diff --cached --quiet || git commit -m "ci: update ${{ matrix.service }} image to ${{ github.sha }}"
+          # 4 matrix jobs push to main concurrently now that all services
+          # always build together — rebase onto the latest remote before
+          # pushing so one job's push doesn't get rejected by another's.
+          git pull --rebase origin main
           git push
 
   security-scan:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.services != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+        service: [order-service, payment-service, user-service, notification-service]
 
     steps:
       - uses: actions/checkout@v4
